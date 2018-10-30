@@ -1,0 +1,7 @@
+[measurements]
+
+[measurements.product_lookup]
+server = 'http://localhost:8086'
+db = 'products'
+rp = 'week'
+strip_tags = ['product_id']
