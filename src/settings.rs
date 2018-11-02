@@ -6,12 +6,6 @@ pub struct Settings {
     pub measurements: Option<HashMap<String, Measurement>>,
 }
 
-impl Settings {
-    pub fn new() -> Settings {
-        Settings { measurements: None }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct Measurement {
     pub server: String,

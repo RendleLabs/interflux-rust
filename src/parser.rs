@@ -1,4 +1,3 @@
-use std::str;
 use nom::*;
 
 named!( terminator<char>, one_of!(&b" ,\n"[..]));
@@ -60,7 +59,6 @@ named!( other_field<&[u8], (&[u8], &[u8])>,
     )
 );
 
-//named!( field<&[u8], (&[u8], &[u8])>, alt!(first_field | other_field));
 named!( field<&[u8], (&[u8], &[u8])>,
     preceded!(
         opt!(tag!(",")),
@@ -85,6 +83,23 @@ named!( timestamp<&[u8], Option<&[u8]> >,
     )
 );
 
+named!( metric<&[u8], Metric>,
+    do_parse!(
+        m: measurement >>
+        t: tags >>
+        f: fields >>
+        ts: timestamp >>
+        (
+            Metric {
+                measurement: m,
+                tags: t,
+                fields: f,
+                timestamp: ts,
+            }
+        )
+    )
+);
+
 fn combine_fields<'a>(first: (&'a [u8], &'a [u8]), others: Vec<(&'a [u8],&'a[u8])>) -> Vec<(&'a [u8],&'a [u8])> {
     let mut v: Vec<(&[u8],&[u8])> = Vec::with_capacity(others.len() + 1);
     v.push(first);
@@ -103,35 +118,16 @@ fn get_timestamp(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
     let r = timestamp(input);
     match r {
         Ok((remaining, value)) => Ok((remaining, value)),
-        Err(Err::Incomplete(needed)) => Ok((input, Some(&input[1..]))),
+        Err(Err::Incomplete(_)) => Ok((input, Some(&input[1..]))),
         Err(e) => Err(e),
     }
 }
 
 pub struct Metric<'a> {
-    measurement: String,
-    tags: Option<Vec<(&'a[u8], &'a[u8])>>,
-    fields: Option<Vec<(String, String)>>,
-    timestamp: Option<u64>,
-}
-
-pub struct Line {
-    measurement: String,
-    tags: Option<Vec<(String, String)>>,
-    fields: Option<Vec<(String, String)>>,
-    timestamp: Option<u64>,
-}
-
-pub fn parse(stream: &[u8]) -> Option<Line> {
-    let (r, s) = until_terminator(stream).unwrap();
-    let (r, t) = until_terminator(r).unwrap();
-    let x = str::from_utf8(s).unwrap();
-    Some(Line {
-        measurement: String::from(x),
-        tags: None,
-        fields: None,
-        timestamp: None,
-    })
+    measurement: &'a[u8],
+    tags: Vec<(&'a[u8], &'a[u8])>,
+    fields: Vec<(&'a[u8], &'a[u8])>,
+    timestamp: Option<&'a[u8]>,
 }
 
 #[test]
@@ -184,7 +180,7 @@ fn check_delimiter_to_equal_sign() {
     let t = b",method=GET\n";
     let r = delimiter_to_equal_sign(t);
     match r {
-        Ok((remaining, value)) => {
+        Ok((_remaining, value)) => {
             assert_eq!(value, b"method");
         }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
@@ -198,7 +194,7 @@ fn check_field_with_trailing_space() {
     let t = b"method=GET ";
     let r = field(t);
     match r {
-        Ok((remaining, (name, value))) => {
+        Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
         }
@@ -213,7 +209,7 @@ fn check_field_with_trailing_comma() {
     let t = b"method=GET,";
     let r = field(t);
     match r {
-        Ok((remaining, (name, value))) => {
+        Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
         }
@@ -228,7 +224,7 @@ fn check_field_with_leading_comma_and_trailing_comma() {
     let t = b",method=GET,";
     let r = field(t);
     match r {
-        Ok((remaining, (name, value))) => {
+        Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
         }
@@ -237,36 +233,6 @@ fn check_field_with_leading_comma_and_trailing_comma() {
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
     };
 }
-
-//#[test]
-//fn check_field_with_preceding_space_and_trailing_space() {
-//    let t = b" method=GET ";
-//    let r = field(t);
-//    match r {
-//        Ok((remaining, (name, value))) => {
-//            assert_eq!(name, b"method");
-//            assert_eq!(value, b"GET");
-//        }
-//        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
-//        Err(Err::Error(e)) => panic!("Error: {:?}", e),
-//        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
-//    };
-//}
-//
-//#[test]
-//fn check_field_with_preceding_space_and_trailing_comma() {
-//    let t = b" method=GET,";
-//    let r = field(t);
-//    match r {
-//        Ok((remaining, (name, value))) => {
-//            assert_eq!(name, b"method");
-//            assert_eq!(value, b"GET");
-//        }
-//        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
-//        Err(Err::Error(e)) => panic!("Error: {:?}", e),
-//        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
-//    };
-//}
 
 #[test]
 fn check_measurement() {
@@ -288,7 +254,7 @@ fn check_timestamp_with_newline() {
     let t = b" 1234567890\n";
     let r = get_timestamp(t);
     match r {
-        Ok((remaining, timestamp)) => {
+        Ok((_remaining, timestamp)) => {
             assert_eq!(timestamp.unwrap(), b"1234567890");
         }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
@@ -302,7 +268,7 @@ fn check_timestamp_with_no_newline() {
     let t = b" 1234567890";
     let r = get_timestamp(t);
     match r {
-        Ok((remaining, timestamp)) => {
+        Ok((_remaining, timestamp)) => {
             assert_eq!(timestamp.unwrap(), b"1234567890");
         }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
@@ -311,44 +277,12 @@ fn check_timestamp_with_no_newline() {
     };
 }
 
-//#[test]
-//fn check_line_with_timestamp_and_newline() {
-//    let t = b"requests count=1 1234567890\n";
-//    let r = line(t);
-//    match r {
-//        Ok((remaining, (measurement, fields, timestamp))) => {
-//            assert_eq!(measurement, b"requests");
-//            assert_eq!(fields, b"count=1");
-//            assert_eq!(timestamp.unwrap(), b"1234567890");
-//        }
-//        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
-//        Err(Err::Error(e)) => panic!("Error: {:?}", e),
-//        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
-//    };
-//}
-//
-//#[test]
-//fn check_line_with_timestamp_and_no_newline() {
-//    let t = b"requests count=1 1234567890";
-//    let r = line(t);
-//    match r {
-//        Ok((remaining, (measurement, fields, timestamp))) => {
-//            assert_eq!(measurement, b"requests");
-//            assert_eq!(fields, b"count=1");
-//            assert_eq!(timestamp.unwrap(), b"1234567890");
-//        }
-//        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
-//        Err(Err::Error(e)) => panic!("Error: {:?}", e),
-//        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
-//    };
-//}
-
 #[test]
 fn check_tag_with_trailing_comma() {
     let t = b",method=GET,blah";
     let r = tag(t);
     match r {
-        Ok((remaining, (key, value))) => {
+        Ok((_remaining, (key, value))) => {
             assert_eq!(key, b"method");
             assert_eq!(value, b"GET");
         }
@@ -363,7 +297,7 @@ fn check_tag_with_trailing_space() {
     let t = b",method=GET ";
     let r = tag(t);
     match r {
-        Ok((remaining, (key, value))) => {
+        Ok((_remaining, (key, value))) => {
             assert_eq!(key, b"method");
             assert_eq!(value, b"GET");
         }
@@ -378,7 +312,7 @@ fn check_tags() {
     let t = b",method=GET,host=foo ";
     let r = tags(t);
     match r {
-        Ok((remaining, vec)) => {
+        Ok((_remaining, vec)) => {
             assert_eq!(vec.len(), 2);
             let (key, value) = vec[0];
             assert_eq!(key, b"method");
@@ -398,7 +332,7 @@ fn check_fields() {
     let t = b" count=1,duration=5 ";
     let r = fields(t);
     match r {
-        Ok((remaining, vec)) => {
+        Ok((_remaining, vec)) => {
             assert_eq!(vec.len(), 2);
             let (key, value) = vec[0];
             assert_eq!(key, b"count");
@@ -406,30 +340,33 @@ fn check_fields() {
             let (key, value) = vec[1];
             assert_eq!(key, b"duration");
             assert_eq!(value, b"5");
-        }
+        },
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
     };
 }
 
-//#[test]
-//fn check_measurement_and_tags() {
-//    let t = b"requests,method=GET,host=foo ";
-//    let r = measurement_and_tags(t);
-//    match r {
-//        Ok((remaining, (measurement, vec))) => {
-//            assert_eq!(measurement, b"requests");
-//            assert_eq!(vec.len(), 2);
-//            let (key, value) = vec[0];
-//            assert_eq!(key, b"method");
-//            assert_eq!(value, b"GET");
-//            let (key, value) = vec[1];
-//            assert_eq!(key, b"host");
-//            assert_eq!(value, b"foo");
-//        }
-//        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
-//        Err(Err::Error(e)) => panic!("Error: {:?}", e),
-//        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
-//    };
-//}
+#[test]
+fn check_metric() {
+    let t = b"requests,method=GET duration=101 123456789\n";
+    let r = metric(t);
+    match r {
+        Ok((_remaining, metric)) => {
+            assert_eq!(metric.measurement, b"requests");
+            assert_eq!(metric.tags.len(), 1);
+            let (key, value) = metric.tags[0];
+            assert_eq!(key, b"method");
+            assert_eq!(value, b"GET");
+            assert_eq!(metric.fields.len(), 1);
+            let (key, value) = metric.fields[0];
+            assert_eq!(key, b"duration");
+            assert_eq!(value, b"101");
+            assert_eq!(metric.timestamp.unwrap(), b"123456789");
+        },
+        Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
+        Err(Err::Error(e)) => panic!("Error: {:?}", e),
+        Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
+    }
+}
+
