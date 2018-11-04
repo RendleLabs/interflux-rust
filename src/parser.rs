@@ -1,38 +1,28 @@
 use nom::*;
 
-named!( terminator<char>, one_of!(&b" ,\n"[..]));
-named!( until_terminator, take_until_either!(" ,\n") );// take_till!(|ch| ch == b',' || ch == b' ' || ch == b'\n') );
+named!(terminator<char>, one_of!(&b" ,\n"[..]));
+named!(until_terminator, take_until_either!(" ,\n")); // take_till!(|ch| ch == b',' || ch == b' ' || ch == b'\n') );
 
-named!( delimiter_to_equal_sign,
-    preceded!(
-        one_of!(&b" ,"[..]),
-        take_until_and_consume!("=")
-    )
+named!(
+    delimiter_to_equal_sign,
+    preceded!(one_of!(&b" ,"[..]), take_until_and_consume!("="))
 );
 
-named!( space_to_equal_sign,
-    preceded!(
-        tag!(" "),
-        take_until_and_consume!("=")
-    )
+named!(
+    space_to_equal_sign,
+    preceded!(tag!(" "), take_until_and_consume!("="))
 );
 
-named!( field_name,
-    take_until_and_consume!("=")
+named!(field_name, take_until_and_consume!("="));
+
+named!(field_value, take_until_either!(", \n"));
+
+named!(
+    comma_to_equal_sign,
+    preceded!(tag!(","), take_until_and_consume!("="))
 );
 
-named!( field_value,
-    take_until_either!(", \n")
-);
-
-named!( comma_to_equal_sign,
-    preceded!(
-        tag!(","),
-        take_until_and_consume!("=")
-    )
-);
-
-named!( measurement, take_until_either!(" ,"));
+named!(measurement, take_until_either!(" ,"));
 
 named!( tag<&[u8], (&[u8], &[u8])>,
     pair!(
@@ -100,8 +90,11 @@ named!( metric<&[u8], Metric>,
     )
 );
 
-fn combine_fields<'a>(first: (&'a [u8], &'a [u8]), others: Vec<(&'a [u8],&'a[u8])>) -> Vec<(&'a [u8],&'a [u8])> {
-    let mut v: Vec<(&[u8],&[u8])> = Vec::with_capacity(others.len() + 1);
+fn combine_fields<'a>(
+    first: (&'a [u8], &'a [u8]),
+    others: Vec<(&'a [u8], &'a [u8])>,
+) -> Vec<(&'a [u8], &'a [u8])> {
+    let mut v: Vec<(&[u8], &[u8])> = Vec::with_capacity(others.len() + 1);
     v.push(first);
     v.extend(&others);
     v
@@ -112,7 +105,7 @@ fn get_timestamp(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
         return Ok((input, None));
     }
     if input[0] == b'\n' {
-        return Ok((&input[1..], None))
+        return Ok((&input[1..], None));
     }
 
     let r = timestamp(input);
@@ -124,14 +117,14 @@ fn get_timestamp(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
 }
 
 pub struct Metric<'a> {
-    measurement: &'a[u8],
-    tags: Vec<(&'a[u8], &'a[u8])>,
-    fields: Vec<(&'a[u8], &'a[u8])>,
-    timestamp: Option<&'a[u8]>,
+    pub measurement: &'a [u8],
+    pub tags: Vec<(&'a [u8], &'a [u8])>,
+    pub fields: Vec<(&'a [u8], &'a [u8])>,
+    pub timestamp: Option<&'a [u8]>,
 }
 
 pub fn parse_metric(bytes: &[u8]) -> Option<(&[u8], Metric)> {
-    match metric(t) {
+    match metric(bytes) {
         Ok((remaining, metric)) => Some((remaining, metric)),
         Err(Err::Incomplete(needed)) => None,
         Err(Err::Error(e)) => None,
@@ -147,7 +140,7 @@ fn check_until_terminator_with_comma() {
         Ok((remaining, value)) => {
             assert_eq!(value, b"requests");
             assert_eq!(remaining[0], b',');
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -162,7 +155,7 @@ fn check_until_terminator_with_space() {
         Ok((remaining, value)) => {
             assert_eq!(value, b"requests");
             assert_eq!(remaining[0], b' ');
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -177,7 +170,7 @@ fn check_until_terminator_with_newline() {
         Ok((remaining, value)) => {
             assert_eq!(value, b"requests");
             assert_eq!(remaining[0], b'\n');
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -191,7 +184,7 @@ fn check_delimiter_to_equal_sign() {
     match r {
         Ok((_remaining, value)) => {
             assert_eq!(value, b"method");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -206,7 +199,7 @@ fn check_field_with_trailing_space() {
         Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -221,7 +214,7 @@ fn check_field_with_trailing_comma() {
         Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -236,7 +229,7 @@ fn check_field_with_leading_comma_and_trailing_comma() {
         Ok((_remaining, (name, value))) => {
             assert_eq!(name, b"method");
             assert_eq!(value, b"GET");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -251,7 +244,7 @@ fn check_measurement() {
         Ok((remaining, measurement)) => {
             assert_eq!(measurement, b"requests");
             assert_eq!(remaining, b" count=1 1234567890\n");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -265,7 +258,7 @@ fn check_timestamp_with_newline() {
     match r {
         Ok((_remaining, timestamp)) => {
             assert_eq!(timestamp.unwrap(), b"1234567890");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -279,7 +272,7 @@ fn check_timestamp_with_no_newline() {
     match r {
         Ok((_remaining, timestamp)) => {
             assert_eq!(timestamp.unwrap(), b"1234567890");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -294,7 +287,7 @@ fn check_tag_with_trailing_comma() {
         Ok((_remaining, (key, value))) => {
             assert_eq!(key, b"method");
             assert_eq!(value, b"GET");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -309,7 +302,7 @@ fn check_tag_with_trailing_space() {
         Ok((_remaining, (key, value))) => {
             assert_eq!(key, b"method");
             assert_eq!(value, b"GET");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -329,7 +322,7 @@ fn check_tags() {
             let (key, value) = vec[1];
             assert_eq!(key, b"host");
             assert_eq!(value, b"foo");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -349,7 +342,7 @@ fn check_fields() {
             let (key, value) = vec[1];
             assert_eq!(key, b"duration");
             assert_eq!(value, b"5");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
@@ -372,10 +365,9 @@ fn check_metric() {
             assert_eq!(key, b"duration");
             assert_eq!(value, b"101");
             assert_eq!(metric.timestamp.unwrap(), b"123456789");
-        },
+        }
         Err(Err::Incomplete(needed)) => panic!("Incomplete: {:?}", needed),
         Err(Err::Error(e)) => panic!("Error: {:?}", e),
         Err(Err::Failure(e)) => panic!("Failure: {:?}", e),
     }
 }
-

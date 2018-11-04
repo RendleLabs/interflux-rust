@@ -1,5 +1,9 @@
+extern crate actix;
+extern crate actix_web;
+extern crate bytes;
 extern crate config;
 extern crate serde;
+extern crate serde_json;
 
 #[macro_use]
 extern crate serde_derive;
@@ -9,50 +13,56 @@ extern crate log;
 
 extern crate nom;
 
-extern crate hyper;
 extern crate futures;
 
 use std::env;
+use std::str;
 
-use hyper::{Body, Request, Response, Server, Method, StatusCode};
-use hyper::rt::{Future, Stream};
-use hyper::service::service_fn;
+use actix_web::{
+    error, http, middleware, server, App, AsyncResponder, Error, FutureResponse, HttpMessage,
+    HttpRequest, HttpResponse,
+};
 
-use futures::future;
+use bytes::BytesMut;
 
-mod settings;
+use futures::{Future, Stream};
+
 mod parser;
+mod settings;
 
 use parser::{parse_metric, Metric};
 
-type BoxFut = Box<Future<Item=Response<Body>, Error=hyper::Error> + Send>;
+#[derive(Debug, Serialize, Deserialize)]
+struct MyObj {
+    name: String,
+    number: i32,
+}
 
-fn intercept(req: Request<Body>) -> BoxFut {
-    let mut v: Vec<u8> = Vec::with_capacity(1024);
+const MIN_SIZE: usize = 1024 * 1024; // max payload size is 5MiB
+const MAX_SIZE: usize = 5 * 1024 * 1024; // max payload size is 5MiB
 
-    req.into_body()
-        .map(move |chunk| {
-            let mut metrics: Vec<Metric> = Vec::new();
-
-            v.copy_from_slice(chunk.as_bytes());
-            loop {
-                match parse_metric(v.as_slice()) {
-                    Some((remaining, metric)) => {
-                        metrics.push(metric);
-                        v.clear();
-                        v.copy_from_slice(remaining);
-                    }
-                    None => {
-                        break;
-                    }
+fn intercept(req: &HttpRequest) -> Box<Future<Item = HttpResponse, Error = Error>> {
+    let x = req.payload().from_err();
+    x.fold(BytesMut::with_capacity(MIN_SIZE), move |mut body, chunk| {
+        if body.len() + chunk.len() > MAX_SIZE {
+            Err(error::ErrorBadRequest("overflow"))
+        } else {
+            body.extend_from_slice(&chunk);
+            Ok(body)
+        }
+    }).and_then(|body| {
+        let mut buf = body.freeze();
+        loop {
+            match parse_metric(&buf.clone()) {
+                Some((remaining, metric)) => {
+                    buf = bytes::Bytes::from(remaining);
+                    println!("{:?}", metric.measurement);
                 }
+                None => break,
             }
-            metrics;
-        })
-        .flatten()
-        .for_each(move |metric| {
-            println!("Measurement: {}", metric.measurement);
-    });
+        }
+        Ok(HttpResponse::Ok().finish())
+    }).responder()
 }
 
 fn main() {
@@ -68,5 +78,15 @@ fn main() {
             error!("Config load error {}", err);
         }
     }
-}
 
+    let sys = actix::System::new("interflux");
+
+    server::new(|| App::new().resource("/write", |r| r.method(http::Method::POST).f(intercept)))
+        .bind("127.0.0.1:8080")
+        .unwrap()
+        .shutdown_timeout(1)
+        .start();
+
+    println!("Started http server: 127.0.0.1:8080");
+    let _ = sys.run();
+}

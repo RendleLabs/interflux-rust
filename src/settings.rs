@@ -1,5 +1,5 @@
+use config::{Config, ConfigError, Environment, File};
 use std::collections::HashMap;
-use config::{ConfigError, Config, File, Environment};
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -15,7 +15,6 @@ pub struct Measurement {
 }
 
 pub fn load(path: String) -> Result<Settings, ConfigError> {
-
     let mut s = Config::new();
 
     s.merge(File::with_name(path.as_str()))?;
