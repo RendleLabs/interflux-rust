@@ -20,12 +20,16 @@ use std::str;
 
 use actix_web::{
     error, http, middleware, server, App, AsyncResponder, Error, FutureResponse, HttpMessage,
-    HttpRequest, HttpResponse,
+    HttpRequest, HttpResponse, Responder,
 };
 
-use bytes::BytesMut;
+use actix_web::dev::PayloadBuffer;
+use actix_web::error::PayloadError;
 
-use futures::{Future, Stream};
+use bytes::{Bytes, BytesMut};
+
+use futures::stream::poll_fn;
+use futures::{Async, Future, Poll, Stream};
 
 mod parser;
 mod settings;
@@ -41,28 +45,34 @@ struct MyObj {
 const MIN_SIZE: usize = 1024 * 1024; // max payload size is 5MiB
 const MAX_SIZE: usize = 5 * 1024 * 1024; // max payload size is 5MiB
 
-fn intercept(req: &HttpRequest) -> Box<Future<Item = HttpResponse, Error = Error>> {
-    let x = req.payload().from_err();
-    x.fold(BytesMut::with_capacity(MIN_SIZE), move |mut body, chunk| {
-        if body.len() + chunk.len() > MAX_SIZE {
-            Err(error::ErrorBadRequest("overflow"))
-        } else {
-            body.extend_from_slice(&chunk);
-            Ok(body)
-        }
-    }).and_then(|body| {
-        let mut buf = body.freeze();
-        loop {
-            match parse_metric(&buf.clone()) {
-                Some((remaining, metric)) => {
-                    buf = bytes::Bytes::from(remaining);
-                    println!("{:?}", metric.measurement);
+type BoxFut = Box<Future<Item = HttpResponse, Error = Error>>;
+
+fn intercept(req: &HttpRequest) -> BoxFut {
+    let mut payload_buffer = PayloadBuffer::new(req.payload() );
+    poll_fn(move || -> Poll<Option<Bytes>, PayloadError> { payload_buffer.readline() })
+        .from_err()
+        .fold(
+            0,
+            move |counter, buf| {
+                let metric = match parse_metric(&buf) {
+                    Some((_, metric)) => Some(metric),
+                    None => None,
+                };
+                match metric {
+                    Some(m) => {
+                        match String::from_utf8(m.measurement.to_vec()) {
+                            Ok(s) => {
+                                println!("{}", s);
+                                Ok(counter + 1)
+                            },
+                            Err(_) => Err(error::ErrorInternalServerError("Fuck"))
+                        }
+                    },
+                    None => Ok(counter)
                 }
-                None => break,
             }
-        }
-        Ok(HttpResponse::Ok().finish())
-    }).responder()
+        ).and_then(|_| Ok(HttpResponse::Ok().finish()))
+        .responder()
 }
 
 fn main() {
