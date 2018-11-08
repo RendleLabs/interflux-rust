@@ -1,5 +1,5 @@
 use config::{Config, ConfigError, Environment, File};
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]

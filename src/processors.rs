@@ -1,5 +1,5 @@
 use bytes::buf::BufMut;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::str;
@@ -22,7 +22,12 @@ impl MetricProcessor {
     pub fn process(&self, name: &str, data: &[u8]) -> usize {
         let mut buf = BytesMut::with_capacity(1024);
         let mut src = data;
-        buf.write_str(name);
+        match buf.write_str(name) {
+            Ok(_) => {},
+            Err(_) => {
+                return 0;
+            },
+        }
         match parse_tags(src) {
             Some((remaining, tags)) => {
                 for (tag, value) in tags {

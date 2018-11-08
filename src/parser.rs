@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use nom::*;
 use std::str;
 
@@ -75,23 +74,6 @@ named!( timestamp<&[u8], Option<&[u8]> >,
     )
 );
 
-named!( metric<&[u8], Parsed>,
-    do_parse!(
-        m: measurement >>
-        t: tags >>
-        f: fields >>
-        ts: timestamp >>
-        (
-            Parsed {
-                measurement: m,
-                tags: t,
-                fields: f,
-                timestamp: ts,
-            }
-        )
-    )
-);
-
 fn combine_fields<'a>(
     first: (&'a [u8], &'a [u8]),
     others: Vec<(&'a [u8], &'a [u8])>,
@@ -118,43 +100,6 @@ fn get_timestamp(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
     }
 }
 
-struct Parsed<'a> {
-    pub measurement: &'a [u8],
-    pub tags: Vec<(&'a [u8], &'a [u8])>,
-    pub fields: Vec<(&'a [u8], &'a [u8])>,
-    pub timestamp: Option<&'a [u8]>,
-}
-
-pub struct Metric<'a> {
-    pub source: &'a [u8],
-    pub measurement: &'a [u8],
-    pub tags: Vec<(&'a [u8], &'a [u8])>,
-    pub fields: Vec<(&'a [u8], &'a [u8])>,
-    pub timestamp: Option<&'a [u8]>,
-}
-
-fn parsed_to_metric(bytes: &'static [u8], parsed: Parsed<'static>) -> Metric<'static> {
-    Metric {
-        source: bytes,
-        measurement: parsed.measurement,
-        tags: parsed.tags,
-        fields: parsed.fields,
-        timestamp: parsed.timestamp,
-    }
-}
-
-pub fn parse_metric(bytes: &'static [u8]) -> Option<(&'static [u8], Metric<'static>)> {
-    match metric(bytes) {
-        Ok((remaining, metric)) => {
-            drop(bytes);
-            Some((remaining, parsed_to_metric(bytes, metric)))
-        }
-        Err(Err::Incomplete(_needed)) => None,
-        Err(Err::Error(_e)) => None,
-        Err(Err::Failure(_e)) => None,
-    }
-}
-
 pub fn get_measurement_name(bytes: &[u8]) -> Option<(&[u8], &str)> {
     match measurement(&bytes) {
         Ok((r, m)) => match str::from_utf8(m) {
@@ -167,18 +112,6 @@ pub fn get_measurement_name(bytes: &[u8]) -> Option<(&[u8], &str)> {
     }
 }
 
-//pub fn get_measurement_name(bytes: &[u8]) -> (&[u8], Option<(&[u8], &str)>) {
-//    let name = match measurement(&bytes) {
-//        Ok((r, m)) => match str::from_utf8(m) {
-//            Ok(s) => Some((r, s)),
-//            Err(_) => None,
-//        },
-//        Err(Err::Incomplete(_needed)) => None,
-//        Err(Err::Error(_e)) => None,
-//        Err(Err::Failure(_e)) => None,
-//    };
-//    (bytes, name)
-//}
 pub fn parse_tags(bytes: &[u8]) -> Option<(&[u8], Vec<(&[u8], &[u8])>)> {
     match tags(bytes) {
         Ok((r, t)) => Some((r, t)),

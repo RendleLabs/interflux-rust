@@ -1,81 +1,66 @@
 use log::error;
-use serde_derive::{Deserialize, Serialize};
 
-use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::env;
-use std::str;
 use std::sync::Arc;
 
-use actix_web::{
-    error, http, middleware, server, App, AsyncResponder, Error, FutureResponse, HttpMessage,
-    HttpRequest, HttpResponse, Responder,
+use hyper::{
+    rt::Future, service::service_fn, Body, Method, Request, Response, Server, StatusCode,
 };
 
-use actix_web::dev::PayloadBuffer;
-use actix_web::error::PayloadError;
+use futures::future;
+use futures::stream::{poll_fn, Stream};
 
-use bytes::{Bytes, BytesMut};
-
-use futures::stream::poll_fn;
-use futures::{Async, Future, Poll, Stream};
-
+mod lines;
 mod parser;
-mod settings;
 mod processors;
+mod settings;
 
+use bytes::Bytes;
+use crate::lines::Reader;
 use crate::parser::get_measurement_name;
-use crate::settings::*;
 use crate::processors::MetricProcessor;
+use futures::future::ok;
+use futures::Poll;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MyObj {
-    name: String,
-    number: i32,
-}
+type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
-const MIN_SIZE: usize = 1024 * 1024;
-// max payload size is 5MiB
-const MAX_SIZE: usize = 5 * 1024 * 1024; // max payload size is 5MiB
-
-type BoxFut = Box<Future<Item = HttpResponse, Error = Error>>;
-
-struct AppState {
-    actors: Arc<HashMap<String, MetricProcessor>>,
-}
-
-fn run(buf: &[u8], actors: Arc<HashMap<String, MetricProcessor>>) -> usize {
+fn run(buf: &[u8], processors: Arc<HashMap<String, MetricProcessor>>) -> usize {
     let name = get_measurement_name(buf);
     match name {
-        Some((r, n)) => {
-            match actors.get(n) {
-                Some(a) => {
-                    a.process(n, r)
-                },
-                None => 0,
-            }
-        }
+        Some((r, n)) => match processors.get(n) {
+            Some(a) => a.process(n, r),
+            None => 0,
+        },
         None => 0,
     }
 }
 
-fn intercept(req: &HttpRequest<AppState>) -> BoxFut {
-    let mut payload_buffer = PayloadBuffer::new(req.payload());
-    let actors = req.state().actors.clone();
-    poll_fn(move || -> Poll<Option<Bytes>, PayloadError> { payload_buffer.readline() })
-        .from_err()
-        .fold(0, move |counter, buf| {
-            let n = run(&buf, actors.clone());
-            if n > 0 {
-                Ok(counter + 1)
-            } else {
-                Err(error::ErrorBadRequest("Oops"))
-            }
-        }).and_then(|_| Ok(HttpResponse::Ok().finish()))
-        .responder()
+fn intercept(req: Request<Body>, processors: Arc<HashMap<String, MetricProcessor>>) -> BoxFut {
+    let mut response = Response::new(Body::empty());
+    match (req.method(), req.uri().path()) {
+        (&Method::POST, "/write") => {
+            let body = req.into_body();
+            let mut reader = Reader::new(body);
+
+            let lines = poll_fn(move || -> Poll<Option<Bytes>, hyper::Error> { reader.read_line() });
+
+            let result = lines
+                .for_each(move |buf| {
+                    run(&buf, processors.clone());
+                    ok(())
+                }).and_then(|_| ok(response));
+
+            return Box::new(result);
+        }
+        _ => {
+            *response.status_mut() = StatusCode::NOT_FOUND;
+        }
+    };
+
+    Box::new(future::ok(response))
 }
 
-fn build_actors() -> HashMap<String, MetricProcessor> {
+fn build_processors() -> HashMap<String, MetricProcessor> {
     let mut map = HashMap::new();
     let p = MetricProcessor::new(vec![String::from("product_id")]);
     map.insert(String::from("product_lookup"), p);
@@ -96,19 +81,21 @@ fn main() {
         }
     }
 
-    let sys = actix::System::new("interflux");
+    let processors = Arc::new(build_processors());
 
-    let actors = Arc::new(build_actors());
+    let addr = ([0, 0, 0, 0], 8080).into();
 
-    server::new(move || {
-        App::with_state(AppState {
-            actors: actors.clone(),
-        }).resource("/write", |r| r.method(http::Method::POST).f(intercept))
-    }).bind("127.0.0.1:8080")
-    .unwrap()
-    .shutdown_timeout(1)
-    .start();
+    let service = move || {
+        let processors = processors.clone();
 
-    println!("Started http server: 127.0.0.1:8080");
-    let _ = sys.run();
+        service_fn(move |req| intercept(req, processors.clone()))
+    };
+
+    let server = Server::bind(&addr)
+        .serve(service)
+        .map_err(|e| eprintln!("Server error: {}", e));
+
+    println!("Started http server: 0.0.0.0:8080");
+
+    hyper::rt::run(server);
 }
