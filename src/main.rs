@@ -1,22 +1,11 @@
-extern crate actix;
-extern crate actix_web;
-extern crate bytes;
-extern crate config;
-extern crate serde;
-extern crate serde_json;
+use log::error;
+use serde_derive::{Deserialize, Serialize};
 
-#[macro_use]
-extern crate serde_derive;
-
-#[macro_use]
-extern crate log;
-
-extern crate nom;
-
-extern crate futures;
-
+use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::env;
 use std::str;
+use std::sync::Arc;
 
 use actix_web::{
     error, http, middleware, server, App, AsyncResponder, Error, FutureResponse, HttpMessage,
@@ -33,8 +22,11 @@ use futures::{Async, Future, Poll, Stream};
 
 mod parser;
 mod settings;
+mod processors;
 
-use parser::{parse_metric, Metric};
+use crate::parser::get_measurement_name;
+use crate::settings::*;
+use crate::processors::MetricProcessor;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MyObj {
@@ -42,41 +34,56 @@ struct MyObj {
     number: i32,
 }
 
-const MIN_SIZE: usize = 1024 * 1024; // max payload size is 5MiB
+const MIN_SIZE: usize = 1024 * 1024;
+// max payload size is 5MiB
 const MAX_SIZE: usize = 5 * 1024 * 1024; // max payload size is 5MiB
 
 type BoxFut = Box<Future<Item = HttpResponse, Error = Error>>;
 
-fn intercept(req: &HttpRequest) -> BoxFut {
-    let mut payload_buffer = PayloadBuffer::new(req.payload() );
+struct AppState {
+    actors: Arc<HashMap<String, MetricProcessor>>,
+}
+
+fn run(buf: &[u8], actors: Arc<HashMap<String, MetricProcessor>>) -> usize {
+    let name = get_measurement_name(buf);
+    match name {
+        Some((r, n)) => {
+            match actors.get(n) {
+                Some(a) => {
+                    a.process(n, r)
+                },
+                None => 0,
+            }
+        }
+        None => 0,
+    }
+}
+
+fn intercept(req: &HttpRequest<AppState>) -> BoxFut {
+    let mut payload_buffer = PayloadBuffer::new(req.payload());
+    let actors = req.state().actors.clone();
     poll_fn(move || -> Poll<Option<Bytes>, PayloadError> { payload_buffer.readline() })
         .from_err()
-        .fold(
-            0,
-            move |counter, buf| {
-                let metric = match parse_metric(&buf) {
-                    Some((_, metric)) => Some(metric),
-                    None => None,
-                };
-                match metric {
-                    Some(m) => {
-                        match String::from_utf8(m.measurement.to_vec()) {
-                            Ok(s) => {
-                                println!("{}", s);
-                                Ok(counter + 1)
-                            },
-                            Err(_) => Err(error::ErrorInternalServerError("Fuck"))
-                        }
-                    },
-                    None => Ok(counter)
-                }
+        .fold(0, move |counter, buf| {
+            let n = run(&buf, actors.clone());
+            if n > 0 {
+                Ok(counter + 1)
+            } else {
+                Err(error::ErrorBadRequest("Oops"))
             }
-        ).and_then(|_| Ok(HttpResponse::Ok().finish()))
+        }).and_then(|_| Ok(HttpResponse::Ok().finish()))
         .responder()
 }
 
+fn build_actors() -> HashMap<String, MetricProcessor> {
+    let mut map = HashMap::new();
+    let p = MetricProcessor::new(vec![String::from("product_id")]);
+    map.insert(String::from("product_lookup"), p);
+    map
+}
+
 fn main() {
-    let result = settings::load(env::args().nth(1).unwrap());
+    let result = settings::load("configs/config.toml");
 
     match result {
         Ok(settings) => {
@@ -91,11 +98,16 @@ fn main() {
 
     let sys = actix::System::new("interflux");
 
-    server::new(|| App::new().resource("/write", |r| r.method(http::Method::POST).f(intercept)))
-        .bind("127.0.0.1:8080")
-        .unwrap()
-        .shutdown_timeout(1)
-        .start();
+    let actors = Arc::new(build_actors());
+
+    server::new(move || {
+        App::with_state(AppState {
+            actors: actors.clone(),
+        }).resource("/write", |r| r.method(http::Method::POST).f(intercept))
+    }).bind("127.0.0.1:8080")
+    .unwrap()
+    .shutdown_timeout(1)
+    .start();
 
     println!("Started http server: 127.0.0.1:8080");
     let _ = sys.run();

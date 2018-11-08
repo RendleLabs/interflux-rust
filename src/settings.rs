@@ -1,4 +1,5 @@
 use config::{Config, ConfigError, Environment, File};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
@@ -14,12 +15,12 @@ pub struct Measurement {
     pub strip_tags: Option<Vec<String>>,
 }
 
-pub fn load(path: String) -> Result<Settings, ConfigError> {
-    let mut s = Config::new();
+pub fn load(path: &str) -> Result<Settings, ConfigError> {
+    let mut config = Config::new();
 
-    s.merge(File::with_name(path.as_str()))?;
+    config.merge(File::with_name(path))?;
 
-    s.merge(Environment::with_prefix("interflux"))?;
+    config.merge(Environment::with_prefix("interflux"))?;
 
-    s.try_into()
+    config.try_into()
 }
