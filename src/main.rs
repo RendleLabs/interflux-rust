@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hyper::{
-    rt::Future, service::service_fn, Body, Method, Request, Response, Server, StatusCode,
+    rt::Future, service::service_fn, Body, Method, Request, Response, Server, StatusCode, Chunk,
 };
 
 use futures::future;
@@ -39,18 +39,25 @@ fn intercept(req: Request<Body>, processors: Arc<HashMap<String, MetricProcessor
     let mut response = Response::new(Body::empty());
     match (req.method(), req.uri().path()) {
         (&Method::POST, "/write") => {
+            println!("/write");
             let body = req.into_body();
             let mut reader = Reader::new(body);
 
-            let lines = poll_fn(move || -> Poll<Option<Bytes>, hyper::Error> { reader.read_line() });
-
-            let result = lines
-                .for_each(move |buf| {
+            let mapping = poll_fn(move || -> Poll<Option<Bytes>, hyper::Error> { reader.read_line() })
+                .fold(0, move |counter, buf| {
                     run(&buf, processors.clone());
-                    ok(())
-                }).and_then(|_| ok(response));
+                    future::ok::<_, hyper::Error>(counter + 1)
+                })
+                .then(move |_| {
+                    *response.status_mut() = StatusCode::OK;
+                    future::ok::<_, hyper::Error>(response)
+                });
 
-            return Box::new(result);
+            return Box::new(mapping);
+//
+//
+//            println!("returning");
+//            *response.status_mut() = StatusCode::OK;
         }
         _ => {
             *response.status_mut() = StatusCode::NOT_FOUND;

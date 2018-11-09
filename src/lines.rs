@@ -29,7 +29,9 @@ where
                 self.items.push_back(data);
                 Async::Ready(true)
             }
-            Async::Ready(None) => Async::Ready(false),
+            Async::Ready(None) =>{
+                Async::Ready(false)
+            },
             Async::NotReady => Async::NotReady,
         })
     }
@@ -44,10 +46,15 @@ where
             let pos = chunk.iter().position(|&c| c == until);
             let found = match pos {
                 Some(p) => {
-                    num = i;
-                    offset = p;
-                    length += p;
-                    true
+                    if p > 0 {
+                        num = i;
+                        offset = p + 1;
+                        length += p + 1;
+                        true
+                    } else {
+                        length += chunk.len();
+                        false
+                    }
                 }
                 None => {
                     length += chunk.len();
@@ -60,17 +67,18 @@ where
                     for _ in 0..num {
                         buf.extend_from_slice(&self.items.pop_front().unwrap());
                     }
-                    if offset > 0 {
-                        let chunk = self.items.pop_front().unwrap();
-                        let (first, last) = chunk.split_at(offset);
-                        buf.extend_from_slice(&first);
-                        if last.len() > 0 {
-                            self.items.push_front(Chunk::from(last.to_vec()));
-                        }
-                    }
-                    self.len -= length;
-                    return Ok(Async::Ready(Some(buf.freeze())));
                 }
+                if offset > 0 {
+                    let chunk = self.items.pop_front().unwrap();
+                    let (first, last) = chunk.split_at(offset);
+                    buf.extend_from_slice(&first);
+                    if last.len() > 0 {
+                        self.items.push_front(Chunk::from(last.to_vec()));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                self.len -= length;
+                return Ok(Async::Ready(Some(buf.freeze())));
             }
         }
 

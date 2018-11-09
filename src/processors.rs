@@ -61,7 +61,7 @@ impl MetricProcessor {
         match parse_timestamp(src) {
             Some((_, timestamp)) => {
                 buf.put(b' ');
-                buf.copy_from_slice(timestamp);
+                buf.extend_from_slice(timestamp);
             }
             None => (),
         }
