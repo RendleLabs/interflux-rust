@@ -23,10 +23,10 @@ impl MetricProcessor {
         let mut buf = BytesMut::with_capacity(1024);
         let mut src = data;
         match buf.write_str(name) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => {
                 return 0;
-            },
+            }
         }
         match parse_tags(src) {
             Some((remaining, tags)) => {

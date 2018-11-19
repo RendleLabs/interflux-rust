@@ -29,9 +29,7 @@ where
                 self.items.push_back(data);
                 Async::Ready(true)
             }
-            Async::Ready(None) =>{
-                Async::Ready(false)
-            },
+            Async::Ready(None) => Async::Ready(false),
             Async::NotReady => Async::NotReady,
         })
     }
@@ -62,23 +60,7 @@ where
                 }
             };
             if found {
-                let mut buf = BytesMut::with_capacity(length);
-                if num > 0 {
-                    for _ in 0..num {
-                        buf.extend_from_slice(&self.items.pop_front().unwrap());
-                    }
-                }
-                if offset > 0 {
-                    let chunk = self.items.pop_front().unwrap();
-                    let (first, last) = chunk.split_at(offset);
-                    buf.extend_from_slice(&first);
-                    if last.len() > 0 {
-                        self.items.push_front(Chunk::from(last.to_vec()));
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                self.len -= length;
-                return Ok(Async::Ready(Some(buf.freeze())));
+                return self.compose_line(length, num, offset);
             }
         }
 
@@ -87,6 +69,32 @@ where
             Async::Ready(false) => Ok(Async::Ready(None)),
             Async::NotReady => Ok(Async::NotReady),
         }
+    }
+
+    fn compose_line(
+        &mut self,
+        length: usize,
+        num: usize,
+        offset: usize,
+    ) -> Result<Async<Option<Bytes>>, Error> {
+        let mut buf = BytesMut::with_capacity(length);
+        if num > 0 {
+            for _ in 0..num {
+                buf.extend_from_slice(&self.items.pop_front().unwrap());
+            }
+        }
+        if offset > 0 {
+            let chunk = self.items.pop_front().unwrap();
+            let (first, last) = chunk.split_at(offset);
+            buf.extend_from_slice(&first);
+            if last.len() > 0 {
+                self.items.push_front(Chunk::from(last.to_vec()));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        self.len -= length;
+        let x = Ok(Async::Ready(Some(buf.freeze())));
+        x
     }
 
     pub fn read_line(&mut self) -> Poll<Option<Bytes>, Error> {
